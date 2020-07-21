@@ -241,4 +241,24 @@ aggregate(WNV_num_bal, by=list(cluster=k7$cluster), mean)
 ```
 
 
+Decision Tree
+
+```{r}
+library(rpart)
+library(rpart.plot)
+
+#Build Decision tree using balanced train set
+tree <- rpart(RESULT~., data = train_bal2, method = 'class')
+rpart.plot(tree, extra = 106)
+```
+
+```{r}
+#Predict base on the Decision tree
+predict_tree <-predict(tree, test_bal2, type = 'class')
+table(test_bal2$RESULT, predict_tree)
+
+#Accuracy:
+(4478+4950)/(4478+4950+1752+1269)
+#Accuracy is 75.73%, better than the glm model.
+```
 
