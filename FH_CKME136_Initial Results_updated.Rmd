@@ -1,0 +1,244 @@
+---
+title: "FH_CKME136_Intial Results"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+
+Load data
+```{r}
+WNV_raw <- read.csv(file = "/Users/frances21445/Dropbox/Ryerson/CKME136/West_Nile_Virus__WNV__Mosquito_Test_Results.csv", header = TRUE)
+```
+
+Data Cleaning
+```{r}
+#Removed 4416 rows where LATTITUDE, LONGITUDE and LOCATION is missing.
+WNV_NA_removed <- na.omit(WNV_raw)
+```
+
+```{r}
+#Converted data types from integer to numerical.
+WNV_NA_removed[,'SEASON.YEAR'] <- as.numeric(WNV_NA_removed[,'SEASON.YEAR'])
+WNV_NA_removed[,'WEEK'] <- as.numeric(WNV_NA_removed[,'WEEK'])
+WNV_NA_removed[,'TEST.ID'] <- as.numeric(WNV_NA_removed[,'TEST.ID'])
+WNV_NA_removed[,'NUMBER.OF.MOSQUITOES'] <- as.numeric(WNV_NA_removed[,'NUMBER.OF.MOSQUITOES'])
+
+#Converted data types from character to factor.
+WNV_NA_removed[,'TRAP'] <- as.factor(WNV_NA_removed[,'TRAP'])
+WNV_NA_removed[,'RESULT'] <- as.factor(WNV_NA_removed[,'RESULT'])
+WNV_NA_removed[,'SPECIES'] <- as.factor(WNV_NA_removed[,'SPECIES'])
+
+sapply(WNV_NA_removed, class)
+```
+
+```{r}
+#Outlier detection and removal
+library(dplyr)
+sapply(select_if(WNV_NA_removed, is.numeric), boxplot.stats)
+outliers <- boxplot.stats(WNV_NA_removed$NUMBER.OF.MOSQUITOES)$out
+boxplot(WNV_NA_removed$NUMBER.OF.MOSQUITOES)
+WNV_clean <- subset(WNV_NA_removed, !(NUMBER.OF.MOSQUITOES %in% outliers))
+```
+
+
+Dimentionality Reduction
+```{r}
+#Removed TEST.ID because it is unique for each data.
+#Removed TEST.DATE because it is similar to SEASON.YEAR and WEEK, all are variables associated with time.
+#Removed LOCATION, because it is simply a combination of LATITUDE and LONGITUDE.
+WNV_reduced <- subset(WNV_clean, select = -c(TEST.ID, TEST.DATE, LOCATION))
+```
+
+
+Data summary and visualization
+```{r}
+str(WNV_reduced)
+```
+
+```{r}
+summary(WNV_reduced)
+```
+
+```{r}
+hist(WNV_clean$SEASON.YEAR, main = 'Distribution: YEAR')
+hist(WNV_clean$WEEK, main = 'Distribution: WEEK')
+hist(WNV_clean$NUMBER.OF.MOSQUITOES, main = 'Distribution: NUMBER OF MOSQUITOES')
+hist(WNV_clean$LATITUDE, main = 'Distribution: LATITUDE')
+hist(WNV_clean$LONGITUDE, main = 'Distribution: LONGTITUDE')
+barplot(table(WNV_clean$BLOCK), main = 'Distribution: BLOCK', xaxt = 'n')
+barplot(table(WNV_clean$TRAP), main = 'Distribution: TRAP', xaxt = 'n')
+pie(table(WNV_clean$TRAP_TYPE), main = 'Distribution: TRAP_TYPE', radius = 1, cex = 0.75)
+pie(table(WNV_clean$SPECIES), main = 'Distribution: SPECIES', radius = 1, cex = 0.75)
+pie(table(WNV_clean$RESULT), main = 'Distribution: RESULT', radius = 1, cex = 1)
+```
+
+```{r}
+#Check sd and variance of numerical attributes
+sapply(select_if(WNV_reduced, is.numeric), sd)
+sapply(select_if(WNV_reduced, is.numeric), var)
+```
+
+
+Classification Model (data imbalance un-dealt)
+```{r}
+set.seed(100)
+library(caTools)
+
+spl = sample.split(WNV_reduced$RESULT, SplitRatio = 0.7)
+train = subset(WNV_reduced, spl==TRUE)
+test = subset(WNV_reduced, spl==FALSE)
+
+dim(train)
+dim(test)
+
+summary(test$RESULT)
+summary(train$RESULT)
+```
+
+```{r}
+#Instantiate the algorithm
+glm_model <- glm(RESULT ~ . , family="binomial", data = train)
+summary(glm_model)
+```
+
+```{r}
+#Algorithm after remove BLOCK and TRAP, and TRAP_TYPE(OVI).
+#Too much categories make following prediction analysis impossible, since the categories will be unevenly distributed between train and test sets.
+#BLOCK and TRAP both contain location information, which may be retained by keeping LATITUDE and LONGITUDE.
+#TRAP_TYPE(OVI) will also be unevenly distributed between train and test sets, since there is only one entry with TRAP_TYPE(OVI).
+
+table(WNV_reduced$TRAP_TYPE)
+
+WNV_reduced2 <- subset(WNV_reduced, select = -c(BLOCK, TRAP))
+WNV_reduced2 <- subset(WNV_reduced2, !(TRAP_TYPE == 'OVI'))
+train2 = subset(WNV_reduced2, spl==TRUE)
+test2 = subset(WNV_reduced2, spl==FALSE)
+
+glm_model2 <- glm(RESULT ~ . , family="binomial", data = train2)
+summary(glm_model2)
+```
+
+```{r}
+#Baseline Accuracy
+prop.table(table(train$RESULT))
+prop.table(table(train2$RESULT))
+```
+
+```{r}
+# Predictions on the training set
+predictTrain2 = predict(glm_model2, data = train2, type = "response")
+
+# Confusion matrix on training data
+table(train2$RESULT, predictTrain2 >= 0.5)
+# Accuracy = (TN + TP)/n
+(29+13)/nrow(train2)
+
+#Predictions on the test set
+predictTest2 = predict(glm_model2, newdata = test2, type = "response")
+
+# Confusion matrix on test set
+table(test2$RESULT, predictTest2 >= 0.5)
+# Accuracy = (TN + TP)/n
+(10+11)/nrow(test2)
+```
+
+
+Classification Model (balanced data)
+```{r}
+library(ROSE)
+
+table(WNV_reduced$RESULT)
+
+#Over sampling of the minority class
+WNV_reduced_bal <- ovun.sample(RESULT ~ ., data = WNV_reduced, method = "over",N = 20817*2)$data
+table(WNV_reduced_bal$RESULT)
+
+#Can also do under sampling of majority class (will result in significant loss of information), or both
+```
+
+```{r}
+train_bal = subset(WNV_reduced_bal, spl==TRUE)
+test_bal = subset(WNV_reduced_bal, spl==FALSE)
+
+glm_model_bal <- glm(RESULT ~ . , family="binomial", data = WNV_reduced_bal)
+summary(glm_model_bal)
+```
+```{r}
+WNV_reduced_bal2 <- subset(WNV_reduced_bal, select = -c(BLOCK, TRAP))
+train_bal2 = subset(WNV_reduced_bal2, spl==TRUE)
+test_bal2 = subset(WNV_reduced_bal2, spl==FALSE)
+
+glm_model_bal2 <- glm(RESULT ~ . , family="binomial", data = train_bal2)
+summary(glm_model_bal2)
+```
+
+
+```{r}
+# Predictions on the training set
+predictTrain_bal2 = predict(glm_model_bal2, data = train_bal2, type = "response")
+
+# Confusion matrix on training data
+table(train_bal2$RESULT, predictTrain_bal2 >= 0.5)
+# Accuracy
+(3744+10296)/nrow(train_bal2)
+
+#Predictions on the test set
+predictTest_bal2 = predict(glm_model_bal2, newdata = test_bal2, type = "response")
+
+# Confusion matrix on test set
+table(test_bal2$RESULT, predictTest_bal2 >= 0.5)
+# Accuracy
+(1549+4356)/nrow(test_bal)
+
+#Accuracy increased dramatically after balancing the data set.
+```
+
+
+K-means Clustering
+```{r}
+#Subset data to include only numerical attributes:
+WNV_num_bal <- subset(WNV_reduced_bal2, select = -c(TRAP_TYPE, SPECIES))
+#Convert RESULT from factor to numeric, with 1 representing negative and 2 representing positive
+WNV_num_bal[,'RESULT'] <- as.numeric(WNV_num_bal[,'RESULT'])
+
+#Scaling data:
+WNV_num_bal_scale <- scale(WNV_num_bal)
+```
+
+
+```{r}
+#Plot within sum of square
+wss <- sapply(2:20, 
+              function(k){kmeans(WNV_num_bal_scale, k, nstart=50, iter.max = 15 )$tot.withinss})
+
+plot(2:20, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares")
+
+#Optimal # of cluster: 7
+
+k7 <- kmeans(WNV_num_bal_scale, 7, nstart=50, iter.max = 15)
+print(k7)
+```
+
+```{r}
+#compute the mean of each variables by clusters using the original data (not scaled)
+aggregate(WNV_num_bal, by=list(cluster=k7$cluster), mean)
+
+#Clusters 4, 5 and 6 contain result means of nearly 2, indicating tested positive of WNV.
+#Characteristics ofpositive RESULT cluters: of WEEK 32~33, high NUMBER.OF.MOSQUITOES.
+```
+
+
+
