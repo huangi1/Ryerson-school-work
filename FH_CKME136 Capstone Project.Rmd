@@ -1,0 +1,360 @@
+---
+title: "FH_CKME136_Intial Results"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+
+Load data
+```{r}
+WNV_raw <- read.csv(file = "/Users/frances21445/Dropbox/Ryerson/CKME136/West_Nile_Virus__WNV__Mosquito_Test_Results.csv", header = TRUE)
+```
+
+Data Cleaning
+```{r}
+#Removed 4416 rows where LATTITUDE, LONGITUDE and LOCATION is missing.
+WNV_NA_removed <- na.omit(WNV_raw)
+```
+
+```{r}
+#Converted data types from integer to numerical.
+WNV_NA_removed[,'SEASON.YEAR'] <- as.numeric(WNV_NA_removed[,'SEASON.YEAR'])
+WNV_NA_removed[,'WEEK'] <- as.numeric(WNV_NA_removed[,'WEEK'])
+WNV_NA_removed[,'TEST.ID'] <- as.numeric(WNV_NA_removed[,'TEST.ID'])
+WNV_NA_removed[,'NUMBER.OF.MOSQUITOES'] <- as.numeric(WNV_NA_removed[,'NUMBER.OF.MOSQUITOES'])
+
+#Converted data types from character to factor.
+WNV_NA_removed[,'TRAP_TYPE'] <- as.factor(WNV_NA_removed[,'TRAP_TYPE'])
+WNV_NA_removed[,'RESULT'] <- as.factor(WNV_NA_removed[,'RESULT'])
+WNV_NA_removed[,'SPECIES'] <- as.factor(WNV_NA_removed[,'SPECIES'])
+
+sapply(WNV_NA_removed, class)
+```
+
+```{r}
+#Outlier detection and removal
+library(dplyr)
+sapply(select_if(WNV_NA_removed, is.numeric), boxplot.stats)
+outliers <- boxplot.stats(WNV_NA_removed$NUMBER.OF.MOSQUITOES)$out
+boxplot(WNV_NA_removed$NUMBER.OF.MOSQUITOES)
+WNV_clean <- subset(WNV_NA_removed, !(NUMBER.OF.MOSQUITOES %in% outliers))
+```
+
+
+Dimentionality Reduction
+```{r}
+#Removed SEASON.YEAR because past years were irrelevant in predicting for future outcomes
+#Removed TEST.ID because it is unique for each data.
+#Removed TEST.DATE because it is similar to SEASON.YEAR and WEEK, all are variables associated with time.
+#Removed LOCATION, because it is simply a combination of LATITUDE and LONGITUDE.
+#Removed BLOCK and TRAP because they contained too much categories that will be unevenly distributed between training and testing sets, thus will make model building complicated. Since BLOCK and TRAP both contain location information in character format, location information may be retained by keeping attributes LATITUDE and LONGITUDE.
+#Removed TRAP_TYPE(OVI) since it will also be unevenly distributed between train and test sets, since there is only one entry with TRAP_TYPE(OVI).
+
+WNV_reduced <- subset(WNV_clean, select = -c(SEASON.YEAR, TEST.ID, TEST.DATE, LOCATION, BLOCK, TRAP))
+WNV_reduced <- subset(WNV_reduced, !(TRAP_TYPE == 'OVI'))
+```
+
+
+Data summary and visualization
+```{r}
+str(WNV_reduced)
+```
+
+```{r}
+summary(WNV_reduced)
+```
+
+```{r}
+hist(WNV_clean$WEEK, main = 'Figure 1a Distribution of WEEK', col = 'blue', xlab = 'WEEK')
+hist(WNV_clean$NUMBER.OF.MOSQUITOES, main = 'Figure 1b Distribution of NUMBER OF MOSQUITOES', col = 'yellow', xlab = 'NUMBER.OF.MOSQUITOES')
+hist(WNV_clean$LATITUDE, main = 'Figure 1c Distribution of LATITUDE', col = 'blue', xlab = 'LATITUDE')
+hist(WNV_clean$LONGITUDE, main = 'Figure 1d Distribution of LONGTITUDE', col = 'yellow', xlab = 'LONGTITUDE')
+barplot(table(WNV_clean$BLOCK), main = 'Figure 1e Distribution of BLOCK', xaxt = 'n',  col = 'blue', xlab = 'BLOCK')
+barplot(table(WNV_clean$TRAP), main = 'Figure 1f Distribution of TRAP', xaxt = 'n',  col = 'yellow', xlab = 'TRAP')
+pie(table(WNV_clean$TRAP_TYPE), main = 'Figure 1g Distribution of TRAP_TYPE', radius = 1.2, cex = 1, col = c('blue', 'yellow', 'cyan', 'white'))
+pie(table(WNV_clean$SPECIES), main = 'Figure 1h Distribution of SPECIES', radius = 1.2, cex = 0.75, col = c('cyan', 'white', 'blue', 'yellow'))
+pie(table(WNV_clean$RESULT), main = 'Figure 1i Distribution of RESULT', radius = 1.2, cex = 1, col = c('white', 'blue'))
+```
+
+```{r}
+library(dplyr)
+
+#Check sd and variance of numerical attributes
+sapply(select_if(WNV_reduced, is.numeric), sd)
+sapply(select_if(WNV_reduced, is.numeric), var)
+```
+
+
+Classification Model (data imbalance un-dealt)
+```{r}
+set.seed(100)
+library(caTools)
+
+spl = sample.split(WNV_reduced$RESULT, SplitRatio = 0.7)
+train = subset(WNV_reduced, spl==TRUE)
+test = subset(WNV_reduced, spl==FALSE)
+
+dim(train)
+dim(test)
+
+summary(test$RESULT)
+summary(train$RESULT)
+```
+
+```{r}
+#Instantiate the algorithm
+glm <- glm(RESULT ~ . , family="binomial", data = train)
+summary(glm)
+```
+
+```{r}
+#Baseline Accuracy
+prop.table(table(train$RESULT))
+```
+
+```{r}
+# Predictions on the training set
+glm_predict_train = predict(glm, data = train, type = "response")
+
+# Confusion matrix on training data
+CM_glm_train <- table(train$RESULT, glm_predict_train >= 0.5)
+print(CM_glm_train)
+# Accuracy = (TN + TP)/n
+(CM_glm_train[1,2] + CM_glm_train[2,2])/nrow(train)
+
+#Predictions on the test set
+glm_predict_test = predict(glm, newdata = test, type = "response")
+
+# Confusion matrix on test set
+CM_glm_test <- table(test$RESULT, glm_predict_test >= 0.5)
+print(CM_glm_test)
+# Accuracy = (TN + TP)/n
+(CM_glm_test[1,2] + CM_glm_test[2,2])/nrow(test)
+#Presision = TP/TP+FP
+CM_glm_test[2,2]/(CM_glm_test[2,2] + CM_glm_test[2,1])
+#Recall = TP/TP+FN
+CM_glm_test[2,2]/(CM_glm_test[2,2] + CM_glm_test[1,1])
+```
+
+
+Classification Model (balanced data)
+```{r}
+library(ROSE)
+
+table(WNV_reduced$RESULT)
+
+#Over sampling of the minority class
+WNV_reduced_bal <- ovun.sample(RESULT ~ ., data = WNV_reduced, method = "over",N = 20816*2)$data
+table(WNV_reduced_bal$RESULT)
+
+#Can also do under sampling of majority class (will result in significant loss of information), or half way under sampling plus half way over sampling.
+```
+
+```{r}
+train_bal = subset(WNV_reduced_bal, spl==TRUE)
+test_bal = subset(WNV_reduced_bal, spl==FALSE)
+
+glm_bal <- glm(RESULT ~ . , family="binomial", data = train_bal)
+summary(glm_bal)
+```
+
+```{r}
+# Predictions on the training set
+glm_predict_train_bal = predict(glm_bal, data = train_bal, type = "response")
+
+# Confusion matrix on training data
+CM_glm_train_bal = table(train_bal$RESULT, glm_predict_train_bal >= 0.5)
+print(CM_glm_train_bal)
+# Accuracy = (TN + TP)/n
+(CM_glm_train_bal[1,2] + CM_glm_train_bal[2,2])/nrow(train_bal)
+#Presision = TP/TP+FP
+CM_glm_train_bal[2,2]/(CM_glm_train_bal[2,2] + CM_glm_train_bal[2,1])
+#Recall = TP/TP+FN
+CM_glm_train_bal[2,2]/(CM_glm_train_bal[2,2] + CM_glm_train_bal[1,1])
+
+#Predictions on the test set
+glm_predict_test_bal = predict(glm_bal, newdata = test_bal, type = "response")
+
+# Confusion matrix on test set
+CM_glm_test_bal <- table(test_bal$RESULT, glm_predict_test_bal >= 0.5)
+print(CM_glm_test_bal)
+# Accuracy = (TN + TP)/n
+(CM_glm_test_bal[1,2] + CM_glm_test_bal[2,2])/nrow(test_bal)
+#Presision = TP/TP+FP
+CM_glm_test_bal[2,2]/(CM_glm_test_bal[2,2] + CM_glm_test_bal[2,1])
+#Recall = TP/TP+FN
+CM_glm_test_bal[2,2]/(CM_glm_test_bal[2,2] + CM_glm_test_bal[1,1])
+
+#Accuracy increased dramatically after balancing the data set.
+```
+
+
+K-means Clustering
+```{r}
+#Subset data to include only numerical attributes:
+WNV_num_bal <- subset(WNV_reduced_bal, select = -c(TRAP_TYPE, SPECIES))
+#Convert RESULT from factor to numeric, with 1 representing negative and 2 representing positive
+WNV_num_bal[,'RESULT'] <- as.numeric(WNV_num_bal[,'RESULT'])
+
+#Scaling data:
+WNV_num_bal_scale <- scale(WNV_num_bal)
+```
+
+
+```{r}
+#Plot within sum of square
+wss <- sapply(2:20, 
+              function(k){kmeans(WNV_num_bal_scale, k, nstart=50, iter.max = 15 )$tot.withinss})
+
+plot(2:20, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares",
+     col = 'blue')
+
+#Optimal # of cluster: 7
+
+k7 <- kmeans(WNV_num_bal_scale, 7, nstart=50, iter.max = 15)
+print(k7)
+```
+
+```{r}
+#compute the mean of each variables by clusters using the original data (not scaled)
+aggregate(WNV_num_bal, by=list(cluster=k7$cluster), mean)
+
+#Clusters 3, 5 and 7 contain result means of 2 or nearly 2, indicating tested positive of WNV.
+#Characteristics of positive RESULT cluters: of WEEK 32~33, high NUMBER.OF.MOSQUITOES.
+```
+
+
+Decision Tree
+
+```{r}
+library(rpart)
+library(rpart.plot)
+
+#Create train and test set on balanced numerical attribute only dataset.
+train_bal_num = subset(WNV_num_bal, spl==TRUE)
+test_bal_num = subset(WNV_num_bal, spl==FALSE)
+
+#Build Decision tree using balanced train set
+tree <- rpart(RESULT ~ ., data = train_bal_num, method = 'class')
+rpart.plot(tree, type=5, extra = 106)
+
+
+
+tree3 <- ctree(
+  RESULT ~ ., 
+  data = train_bal_num)
+plot(tree3)
+```
+
+
+```{r}
+#Predict base on the train set.
+tree_predict_train <-predict(tree, data = train_bal_num, type = 'class')
+#Confusion matrix
+CM_tree_predict_train <- table(train_bal_num$RESULT, tree_predict_train)
+print(CM_tree_predict_train)
+
+#Accuracy:
+(CM_tree_predict_train[1,2] + CM_tree_predict_train[2,2])/(nrow(train_bal_num))
+#Presision:
+CM_tree_predict_train[2,2]/(CM_tree_predict_train[2,2] + CM_tree_predict_train[2,1])
+#Recall:
+CM_tree_predict_train[2,2]/(CM_tree_predict_train[2,2] + CM_tree_predict_train[1,1])
+
+#Predict base on the test set.
+tree_predict_test <-predict(tree, newdata = test_bal_num, type = 'class')
+#Confusion matrix
+CM_tree_predict_test <- table(test_bal_num$RESULT, tree_predict_test)
+print(CM_tree_predict_test)
+
+#Accuracy:
+(CM_tree_predict_test[1,2] + CM_tree_predict_test[2,2])/(nrow(test_bal_num))
+#Presision:
+CM_tree_predict_test[2,2]/(CM_tree_predict_test[2,2] + CM_tree_predict_test[2,1])
+#Recall:
+CM_tree_predict_test[2,2]/(CM_tree_predict_test[2,2] + CM_tree_predict_test[1,1])
+```
+
+
+
+Predictive model with 9:1 split of train and test sets
+
+```{r}
+spl2 = sample.split(WNV_reduced$RESULT, SplitRatio = 0.9)
+```
+
+
+Logistic Regression
+```{r}
+train_bal2 = subset(WNV_reduced_bal, spl2==TRUE)
+test_bal2 = subset(WNV_reduced_bal, spl2==FALSE)
+
+glm_bal2 <- glm(RESULT ~ . , family="binomial", data = train_bal2)
+summary(glm_bal2)
+```
+
+```{r}
+# Predictions on the training set
+glm_predict_train_bal2 = predict(glm_bal2, data = train_bal2, type = "response")
+
+# Confusion matrix on training data
+CM_glm_train_bal2 = table(train_bal2$RESULT, glm_predict_train_bal2 >= 0.5)
+print(CM_glm_train_bal2)
+# Accuracy = (TN + TP)/n
+(CM_glm_train_bal2[1,2] + CM_glm_train_bal2[2,2])/nrow(train_bal2)
+
+#Predictions on the test set
+glm_predict_test_bal2 = predict(glm_bal2, newdata = test_bal2, type = "response")
+
+# Confusion matrix on test set
+CM_glm_test_bal2 <- table(test_bal2$RESULT, glm_predict_test_bal2 >= 0.5)
+print(CM_glm_test_bal2)
+# Accuracy = (TN + TP)/n
+(CM_glm_test_bal2[1,2] + CM_glm_test_bal2[2,2])/nrow(test_bal2)
+```
+
+
+
+Decision tree
+```{r}
+train_bal_num2 = subset(WNV_num_bal, spl==TRUE)
+test_bal_num2 = subset(WNV_num_bal, spl==FALSE)
+
+tree2 <- rpart(RESULT ~ ., data = train_bal_num2, method = 'class')
+rpart.plot(tree2, type=5, extra = 106)
+```
+
+```{r}
+#Predict base on the train set.
+tree_predict_train2 <-predict(tree2, data = train_bal_num2, type = 'class')
+#Confusion matrix
+CM_tree_predict_train2 <- table(train_bal_num2$RESULT, tree_predict_train2)
+print(CM_tree_predict_train2)
+
+#Accuracy:
+(CM_tree_predict_train2[1,2] + CM_tree_predict_train2[2,2])/(nrow(train_bal_num2))
+
+#Predict base on the test set.
+tree_predict_test2 <-predict(tree2, newdata = test_bal_num2, type = 'class')
+#Confusion matrix
+CM_tree_predict_test2 <- table(test_bal_num2$RESULT, tree_predict_test2)
+print(CM_tree_predict_test2)
+
+#Accuracy:
+(CM_tree_predict_test2[1,2] + CM_tree_predict_test2[2,2])/(nrow(test_bal_num2))
+```
+
+
